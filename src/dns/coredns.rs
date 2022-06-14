@@ -6,6 +6,7 @@ use resolv_conf;
 use std::env;
 use std::fs::File;
 use std::io::Read;
+use std::net::Ipv4Addr;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use tokio::net::UdpSocket;
@@ -17,6 +18,8 @@ use trust_dns_proto::{
     xfer::{dns_handle::DnsHandle, DnsRequest},
     BufStreamHandle,
 };
+
+pub const AARDVARK_INTERNAL_HEALTHCHECK: &str = "aardvark-internal-healthcheck.";
 
 pub struct CoreDns {
     name: Name,                          // name or origin
@@ -198,6 +201,28 @@ impl CoreDns {
                                         reply(sender.clone(), src_address, &req_clone);
                                     }
                                 };
+                            }
+
+                            // If internal health check return early
+                            if name.as_str() == AARDVARK_INTERNAL_HEALTHCHECK {
+                                let record_name: Name = match Name::from_str_relaxed(name.as_str()) {
+                                    Ok(name) => name,
+                                    Err(e) => {
+                                        error!("Error while parsing record name: {:?}", e);
+                                        continue;
+                                    }
+                                };
+                                req.add_answer(
+                                    Record::new()
+                                        .set_name(record_name.clone())
+                                        .set_ttl(86400)
+                                        .set_rr_type(RecordType::A)
+                                        .set_dns_class(DNSClass::IN)
+                                        .set_rdata(RData::A(Ipv4Addr::new(127, 0, 0, 1)))
+                                        .clone(),
+                                );
+                                reply(sender, src_address, &req);
+                                continue;
                             }
 
                             // attempt intra network resolution

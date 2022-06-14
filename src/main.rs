@@ -71,6 +71,7 @@ fn main() {
     let filter_search_domain = opts
         .filter_search_domain
         .unwrap_or_else(|| String::from(".dns.podman"));
+
     let result = match opts.subcmd {
         SubCommand::Run(run) => run.exec(dir, port, filter_search_domain),
         SubCommand::Version(version) => version.exec(),
