@@ -33,6 +33,7 @@ enum SubCommand {
 }
 
 fn main() {
+    env_logger::builder().format_timestamp(None).init();
     let formatter = Formatter3164 {
         facility: Facility::LOG_USER,
         hostname: None,
@@ -71,6 +72,7 @@ fn main() {
     let filter_search_domain = opts
         .filter_search_domain
         .unwrap_or_else(|| String::from(".dns.podman"));
+
     let result = match opts.subcmd {
         SubCommand::Run(run) => run.exec(dir, port, filter_search_domain),
         SubCommand::Version(version) => version.exec(),

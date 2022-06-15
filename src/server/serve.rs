@@ -2,6 +2,7 @@ use crate::backend::DNSBackend;
 use crate::config;
 use crate::config::constants::AARDVARK_PID_FILE;
 use crate::dns::coredns::CoreDns;
+use crate::dns::coredns::AARDVARK_INTERNAL_HEALTHCHECK;
 use log::{debug, error, info};
 use signal_hook::consts::signal::SIGHUP;
 use signal_hook::iterator::Signals;
@@ -16,6 +17,14 @@ use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
 use std::process;
+
+use std::str::FromStr;
+use std::time::Duration;
+use trust_dns_client::client::{Client, SyncClient};
+use trust_dns_client::rr::{DNSClass, Name, RData, Record, RecordType};
+use trust_dns_client::udp::UdpClientConnection;
+
+use std::time;
 
 // Will be only used by server to share backend
 // across threads
@@ -249,5 +258,52 @@ async fn start_dns_server(
 async fn send_broadcast(tx: &async_broadcast::Sender<bool>) {
     if let Err(e) = tx.broadcast(true).await {
         error!("unable to broadcast to child threads: {:?}", e);
+    }
+}
+
+// verify_aardvark_server: is a public function to verify if aardvark server is running on a given address.
+pub fn verify_aardvark_server(address_string: String) -> bool {
+    if let Ok(address) = address_string.parse() {
+        if let Ok(conn) = UdpClientConnection::with_timeout(address, Duration::from_millis(5)) {
+            // and then create the Client
+            let client = SyncClient::new(conn);
+            // server will be killed by last request
+            if let Ok(name) = Name::from_str(AARDVARK_INTERNAL_HEALTHCHECK) {
+                let response = client.query(&name, DNSClass::IN, RecordType::A);
+                if let Ok(response) = response {
+                    let answers: &[Record] = response.answers();
+                    if let &RData::A(ref ip) = answers[0].rdata() {
+                        // internal healthcheck is hardcoded to return v4
+                        // so this is fine
+                        if *ip == Ipv4Addr::new(127, 0, 0, 1) {
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// wait_till_aardvark_server_ready: is a public function which waits till aardvark server becomes healthy for
+// a given ip address and port, retries for 10 times over a delay of 10ms.
+pub fn wait_till_aardvark_server_ready(ip: IpAddr, port: u32) {
+    let address_string = format!("{}:{}", ip, port);
+    log::debug!("Verifying server on {}", address_string);
+    let mut verified = false;
+    let mut retry_count = 10;
+    while !verified && retry_count > 0 {
+        verified = verify_aardvark_server(address_string.clone());
+        if verified {
+            // verification was successful
+            // dont retry anymore and return.
+            return;
+        }
+        let duration_millis = time::Duration::from_millis(500);
+        thread::sleep(duration_millis);
+        retry_count -= 1;
     }
 }
